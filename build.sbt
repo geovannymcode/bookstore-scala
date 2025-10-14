@@ -17,6 +17,7 @@ lazy val V = new {
   val akkaHttp    = "10.5.0"
   val alpakkaKafka= "4.0.2"
   val circe       = "0.14.5"
+  val akkaHttpCirce = "1.39.2"
   val logback     = "1.4.11"
   val postgres    = "42.6.0"
   val hikari      = "5.0.1"
@@ -45,6 +46,8 @@ lazy val serviceDeps = commonDeps ++ Seq(
   "com.typesafe.akka" %% "akka-actor-typed" % V.akka,
   "com.typesafe.akka" %% "akka-stream"      % V.akka,
   "com.typesafe.akka" %% "akka-http"        % V.akkaHttp,
+  // Akka HTTP + Circe integration ← AGREGADO
+  "de.heikoseeberger" %% "akka-http-circe"  % V.akkaHttpCirce,
   // Kafka con Akka (Alpakka Kafka)
   "com.typesafe.akka" %% "akka-stream-kafka" % V.alpakkaKafka,
   // DB
