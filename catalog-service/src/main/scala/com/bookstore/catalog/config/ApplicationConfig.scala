@@ -16,9 +16,9 @@ class ApplicationConfig extends LazyLogging {
   logger.info(s"HTTP Server: ${config.http.host}:${config.http.port}")
 
   // Exponer configuraciones
-  val pageSize: Int = config.catalog.pageSize
+  val pageSize: Int    = config.catalog.pageSize
   val httpHost: String = config.http.host
-  val httpPort: Int = config.http.port
+  val httpPort: Int    = config.http.port
 
   def dataSource(): HikariDataSource = {
     val hikariConfig = new HikariConfig()
@@ -35,15 +35,18 @@ class ApplicationConfig extends LazyLogging {
     hikariConfig.setIdleTimeout(config.database.pool.idleTimeout)
     hikariConfig.setMaxLifetime(config.database.pool.maxLifetime)
 
-    logger.info("Creating HikariCP DataSource with pool size: " +
-      s"${config.database.pool.minimumIdle}-${config.database.pool.maximumPoolSize}")
+    logger.info(
+      "Creating HikariCP DataSource with pool size: " +
+        s"${config.database.pool.minimumIdle}-${config.database.pool.maximumPoolSize}"
+    )
 
     new HikariDataSource(hikariConfig)
   }
 
   def runMigrations(ds: HikariDataSource): Unit = {
     logger.info("Running database migrations...")
-    val flyway = Flyway.configure()
+    val flyway = Flyway
+      .configure()
       .dataSource(ds)
       .locations("classpath:db/migration")
       .load()

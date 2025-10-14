@@ -1,0 +1,170 @@
+version: '3'
+
+vars:
+  GOOS: "{{default OS .GOOS}}"
+  SBT: '{{if eq .GOOS "windows"}}sbt.bat{{else}}sbt{{end}}'
+  DC_DIR: "deployment/docker-compose"
+  INFRA_DC_FILE: "{{.DC_DIR}}/infra.yml"
+  APPS_DC_FILE: "{{.DC_DIR}}/apps.yml"
+  MONITORING_DC_FILE: "{{.DC_DIR}}/monitoring.yml"
+  SLEEP_CMD: '{{if eq .GOOS "windows"}}timeout{{else}}sleep{{end}}'
+
+tasks:
+  default:
+    desc: "Run tests by default"
+    cmds:
+      - task: test
+
+  # ========== Formatting & Linting ==========
+  format:
+    desc: "Format all Scala code using scalafmt"
+    cmds:
+      - "{{.SBT}} scalafmtAll scalafmtSbt"
+
+  format-check:
+    desc: "Check if code is properly formatted"
+    cmds:
+      - "{{.SBT}} scalafmtCheckAll scalafmtSbtCheck"
+
+  # ========== Testing ==========
+  test:
+    desc: "Run all tests"
+    cmds:
+      - "{{.SBT}} test"
+
+  test-catalog:
+    desc: "Run catalog-service tests"
+    cmds:
+      - "{{.SBT}} \"catalogService/test\""
+
+  test-order:
+    desc: "Run order-service tests"
+    cmds:
+      - "{{.SBT}} \"orderService/test\""
+
+  test-notification:
+    desc: "Run notification-service tests"
+    cmds:
+      - "{{.SBT}} \"notificationService/test\""
+
+  # ========== Compilation ==========
+  compile:
+    desc: "Compile all projects"
+    cmds:
+      - "{{.SBT}} compile"
+
+  clean:
+    desc: "Clean all build artifacts"
+    cmds:
+      - "{{.SBT}} clean"
+
+  # ========== Local Development ==========
+  run-catalog:
+    desc: "Run catalog-service locally"
+    cmds:
+      - "{{.SBT}} \"catalogService/run\""
+
+  run-order:
+    desc: "Run order-service locally"
+    cmds:
+      - "{{.SBT}} \"orderService/run\""
+
+  run-notification:
+    desc: "Run notification-service locally"
+    cmds:
+      - "{{.SBT}} \"notificationService/run\""
+
+  # ========== Infrastructure Management ==========
+  start_infra:
+    desc: "Start infrastructure services (PostgreSQL, Kafka, etc.)"
+    cmds:
+      - "docker compose -f {{.INFRA_DC_FILE}} up -d"
+      - echo "Infrastructure started. Waiting for services to be ready..."
+      - task: sleep
+        vars: { DURATION: 10 }
+
+  stop_infra:
+    desc: "Stop infrastructure services"
+    cmds:
+      - "docker compose -f {{.INFRA_DC_FILE}} stop"
+      - "docker compose -f {{.INFRA_DC_FILE}} rm -f"
+
+  restart_infra:
+    desc: "Restart infrastructure services"
+    cmds:
+      - task: stop_infra
+      - task: sleep
+      - task: start_infra
+
+  logs_infra:
+    desc: "Show infrastructure logs"
+    cmds:
+      - "docker compose -f {{.INFRA_DC_FILE}} logs -f"
+
+  # ========== Monitoring ==========
+  start_monitoring:
+    desc: "Start monitoring services (Prometheus, Grafana, etc.)"
+    cmds:
+      - "docker compose -f {{.MONITORING_DC_FILE}} up -d"
+
+  stop_monitoring:
+    desc: "Stop monitoring services"
+    cmds:
+      - "docker compose -f {{.MONITORING_DC_FILE}} stop"
+      - "docker compose -f {{.MONITORING_DC_FILE}} rm -f"
+
+  restart_monitoring:
+    desc: "Restart monitoring services"
+    cmds:
+      - task: stop_monitoring
+      - task: sleep
+      - task: start_monitoring
+
+  # ========== Utilities ==========
+  sleep:
+    desc: "Sleep for specified duration (default 5 seconds)"
+    vars:
+      DURATION: "{{default 5 .DURATION}}"
+    cmds:
+      - "{{.SLEEP_CMD}} {{.DURATION}}"
+
+  ps:
+    desc: "Show running containers"
+    cmds:
+      - "docker compose -f {{.INFRA_DC_FILE}} ps"
+
+  health:
+    desc: "Check health of all services"
+    cmds:
+      - echo "Checking infrastructure health..."
+      - "docker compose -f {{.INFRA_DC_FILE}} ps"
+      - echo ""
+      - echo "Checking catalog-service..."
+      - curl -f http://localhost:8081/api/products?page=1 || echo "Catalog service not responding"
+
+  clean-all:
+    desc: "Clean everything (build artifacts, Docker volumes, etc.)"
+    cmds:
+      - task: stop_infra
+      - task: clean
+      - "docker system prune -f"
+      - echo "Cleanup complete!"
+
+  # ========== CI/CD Helpers ==========
+  ci:
+    desc: "Run CI pipeline (format check, compile, test)"
+    cmds:
+      - task: format-check
+      - task: compile
+      - task: test
+
+  package:
+    desc: "Package all services"
+    cmds:
+      - "{{.SBT}} package"
+
+  # ========== Show SBT Projects ==========
+  projects:
+    desc: "List all SBT projects"
+    cmds:
+      - "{{.SBT}} projects"

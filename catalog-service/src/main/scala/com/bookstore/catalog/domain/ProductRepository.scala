@@ -10,8 +10,7 @@ trait ProductRepositoryContext {
     ctx.schemaMeta[Product]("products")
 }
 
-final class ProductRepository(dataSource: HikariDataSource)
-  extends ProductRepositoryContext {
+final class ProductRepository(dataSource: HikariDataSource) extends ProductRepositoryContext {
 
   override val ctx = new PostgresJdbcContext(SnakeCase, dataSource)
   import ctx._
@@ -31,7 +30,7 @@ final class ProductRepository(dataSource: HikariDataSource)
     }
 
     val products = run(pagedQ)
-    val total = run(countQ)
+    val total    = run(countQ)
 
     (products, total)
   }

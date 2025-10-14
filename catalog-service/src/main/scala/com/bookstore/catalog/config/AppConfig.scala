@@ -6,32 +6,32 @@ import scala.concurrent.duration.FiniteDuration
 case class CatalogConfig(name: String, pageSize: Int)
 
 case class DatabaseConfig(
-                           url: String,
-                           username: String,
-                           password: String,
-                           driver: String,
-                           pool: PoolConfig
-                         )
+  url: String,
+  username: String,
+  password: String,
+  driver: String,
+  pool: PoolConfig
+)
 
 case class PoolConfig(
-                       minimumIdle: Int,
-                       maximumPoolSize: Int,
-                       connectionTimeout: Long,
-                       idleTimeout: Long,
-                       maxLifetime: Long
-                     )
+  minimumIdle: Int,
+  maximumPoolSize: Int,
+  connectionTimeout: Long,
+  idleTimeout: Long,
+  maxLifetime: Long
+)
 
 case class HttpConfig(
-                       host: String,
-                       port: Int,
-                       terminationDeadline: FiniteDuration
-                     )
+  host: String,
+  port: Int,
+  terminationDeadline: FiniteDuration
+)
 
 case class SwaggerConfig(apiGatewayUrl: String)
 
 case class AppConfig(
-                      catalog: CatalogConfig,
-                      database: DatabaseConfig,
-                      http: HttpConfig,
-                      swagger: SwaggerConfig
-                    )
+  catalog: CatalogConfig,
+  database: DatabaseConfig,
+  http: HttpConfig,
+  swagger: SwaggerConfig
+)

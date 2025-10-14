@@ -14,12 +14,11 @@ import de.heikoseeberger.akkahttpcirce.FailFastCirceSupport._
 import scala.concurrent.ExecutionContextExecutor
 import scala.concurrent.duration._
 
-/**
- * API REST para productos usando Akka HTTP
- */
+/** API REST para productos usando Akka HTTP
+  */
 class ProductApi(productService: ProductService) extends LazyLogging {
 
-  implicit val system: ActorSystem[Nothing] = ActorSystem(Behaviors.empty, "catalog-api")
+  implicit val system: ActorSystem[Nothing]               = ActorSystem(Behaviors.empty, "catalog-api")
   implicit val executionContext: ExecutionContextExecutor = system.executionContext
 
   val route: Route =
@@ -47,9 +46,8 @@ class ProductApi(productService: ProductService) extends LazyLogging {
       )
     }
 
-  /**
-   * Inicia el servidor HTTP
-   */
+  /** Inicia el servidor HTTP
+    */
   def start(host: String, port: Int, terminationDeadline: FiniteDuration = 10.seconds): Unit = {
     val bindingFuture = Http().newServerAt(host, port).bind(route)
 

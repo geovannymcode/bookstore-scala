@@ -1,8 +1,7 @@
 package com.bookstore.catalog.domain
 
-/**
- * Excepción para producto no encontrado
- */
+/** Excepción para producto no encontrado
+  */
 class ProductNotFoundException(message: String) extends RuntimeException(message)
 
 object ProductNotFoundException {
