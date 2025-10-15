@@ -1,46 +1,69 @@
 package com.bookstore.catalog.domain
 
+import zio._
 import io.getquill._
-import com.zaxxer.hikari.HikariDataSource
+import io.getquill.jdbczio.Quill
+import javax.sql.DataSource
 
-trait ProductRepositoryContext {
-  val ctx: PostgresJdbcContext[SnakeCase.type]
-
-  implicit val productSchema: ctx.SchemaMeta[Product] =
-    ctx.schemaMeta[Product]("products")
+/** Trait para el repositorio de productos
+ */
+trait ProductRepository {
+  def findAll(page: Int, pageSize: Int): IO[CatalogError, (List[Product], Long)]
+  def findByCode(code: String): IO[CatalogError, Option[Product]]
 }
 
-final class ProductRepository(dataSource: HikariDataSource) extends ProductRepositoryContext {
+/** Implementación del repositorio usando Quill + ZIO
+ */
+final case class ProductRepositoryLive(quill: Quill.Postgres[SnakeCase.type])
+  extends ProductRepository {
 
-  override val ctx = new PostgresJdbcContext(SnakeCase, dataSource)
-  import ctx._
+  import quill._
 
-  def findAll(page: Int, pageSize: Int): (List[Product], Long) = {
+  // Schema mapping
+  inline given productSchema: SchemaMeta[Product] =
+    schemaMeta[Product]("products")
+
+  override def findAll(page: Int, pageSize: Int): IO[CatalogError, (List[Product], Long)] = {
     val offset = page * pageSize
 
-    val pagedQ = quote {
+    val productsQuery = quote {
       query[Product]
         .drop(lift(offset))
         .take(lift(pageSize))
         .sortBy(p => p.name)(Ord.asc)
     }
 
-    val countQ = quote {
+    val countQuery = quote {
       query[Product].size
     }
 
-    val products = run(pagedQ)
-    val total    = run(countQ)
-
-    (products, total)
+    for {
+      products <- run(productsQuery)
+        .mapError(err => CatalogError.DatabaseError(err))
+      total    <- run(countQuery)
+        .mapError(err => CatalogError.DatabaseError(err))
+    } yield (products, total)
   }
 
-  def findByCode(code: String): Option[Product] = {
-    val byCodeQ = quote {
+  override def findByCode(code: String): IO[CatalogError, Option[Product]] = {
+    val byCodeQuery = quote {
       query[Product].filter(_.code == lift(code))
     }
-    run(byCodeQ).headOption
-  }
 
-  def close(): Unit = dataSource.close()
+    run(byCodeQuery)
+      .map(_.headOption)
+      .mapError(err => CatalogError.DatabaseError(err))
+  }
+}
+
+/** Layer para dependency injection
+ */
+object ProductRepository {
+
+  val live: ZLayer[Quill.Postgres[SnakeCase.type], Nothing, ProductRepository] =
+    ZLayer {
+      for {
+        quill <- ZIO.service[Quill.Postgres[SnakeCase.type]]
+      } yield ProductRepositoryLive(quill)
+    }
 }

@@ -1,73 +1,82 @@
-package com.bookstore.catalog.web.api
+package com.bookstore.catalog.web
 
-import akka.actor.typed.ActorSystem
-import akka.actor.typed.scaladsl.Behaviors
-import akka.http.scaladsl.Http
-import akka.http.scaladsl.model.StatusCodes
-import akka.http.scaladsl.server.Directives._
-import akka.http.scaladsl.server.Route
-import com.bookstore.catalog.domain.{ProductNotFoundException, ProductService}
-import com.typesafe.scalalogging.LazyLogging
-import io.circe.generic.auto._
-import de.heikoseeberger.akkahttpcirce.FailFastCirceSupport._
+import zio._
+import zio.http._
+import zio.json._
+import com.bookstore.catalog.domain._
 
-import scala.concurrent.ExecutionContextExecutor
-import scala.concurrent.duration._
+/** API REST para productos usando ZIO HTTP
+ */
+object ProductApi {
 
-/** API REST para productos usando Akka HTTP
-  */
-class ProductApi(productService: ProductService) extends LazyLogging {
+  /** Crea las rutas HTTP para productos
+   */
+  def routes: Http[ProductService, Nothing, Request, Response] =
+    Http.collectZIO[Request] {
 
-  implicit val system: ActorSystem[Nothing]               = ActorSystem(Behaviors.empty, "catalog-api")
-  implicit val executionContext: ExecutionContextExecutor = system.executionContext
+      // GET /api/products?page=1
+      case req @ Method.GET -> Root / "api" / "products" =>
+        val pageNo = req.url.queryParams.get("page").flatMap(_.headOption).flatMap(_.toIntOption).getOrElse(1)
 
-  val route: Route =
-    pathPrefix("api" / "products") {
-      concat(
-        // GET /api/products?page=1
-        (get & pathEndOrSingleSlash) {
-          parameter("page".as[Int].withDefault(1)) { pageNo =>
-            logger.info(s"Fetching products for page: $pageNo")
-            complete(productService.getProducts(pageNo))
-          }
-        },
-        // GET /api/products/{code}
-        (get & path(Segment)) { code =>
-          logger.info(s"Fetching product for code: $code")
-          productService.getProductByCode(code) match {
-            case Some(product) => complete(product)
-            case None =>
-              complete(
-                StatusCodes.NotFound,
-                ProductNotFoundException.forCode(code).getMessage
-              )
-          }
-        }
-      )
+        getProducts(pageNo)
+          .foldZIO(
+            error => ZIO.succeed(errorResponse(error)),
+            result => ZIO.succeed(Response.json(result.toJson))
+          )
+
+      // GET /api/products/{code}
+      case Method.GET -> Root / "api" / "products" / code =>
+        getProductByCode(code)
+          .foldZIO(
+            error => ZIO.succeed(errorResponse(error)),
+            product => ZIO.succeed(Response.json(product.toJson))
+          )
     }
 
-  /** Inicia el servidor HTTP
-    */
-  def start(host: String, port: Int, terminationDeadline: FiniteDuration = 10.seconds): Unit = {
-    val bindingFuture = Http().newServerAt(host, port).bind(route)
+  /** Obtiene productos paginados
+   */
+  private def getProducts(pageNo: Int): ZIO[ProductService, CatalogError, PagedResult[Product]] =
+    for {
+      _      <- ZIO.logInfo(s"Fetching products for page: $pageNo")
+      service <- ZIO.service[ProductService]
+      result <- service.getProducts(pageNo)
+    } yield result
 
-    bindingFuture.onComplete {
-      case scala.util.Success(binding) =>
-        logger.info(s"Server online at http://${binding.localAddress.getHostString}:${binding.localAddress.getPort}/")
-      case scala.util.Failure(ex) =>
-        logger.error(s"Failed to bind HTTP server: ${ex.getMessage}", ex)
-        system.terminate()
-    }
+  /** Obtiene un producto por código
+   */
+  private def getProductByCode(code: String): ZIO[ProductService, CatalogError, Product] =
+    for {
+      _       <- ZIO.logInfo(s"Fetching product for code: $code")
+      service <- ZIO.service[ProductService]
+      product <- service.getProductByCode(code)
+    } yield product
 
-    // Graceful shutdown
-    sys.addShutdownHook {
-      logger.info("Shutting down HTTP server...")
-      bindingFuture
-        .flatMap(_.terminate(terminationDeadline))
-        .onComplete { _ =>
-          logger.info("HTTP server terminated, shutting down ActorSystem...")
-          system.terminate()
-        }
-    }
+  /** Convierte un error en una respuesta HTTP
+   */
+  private def errorResponse(error: CatalogError): Response = error match {
+    case CatalogError.ProductNotFound(code) =>
+      Response
+        .text(s"Product with code '$code' not found")
+        .withStatus(Status.NotFound)
+
+    case CatalogError.ValidationError(field, reason) =>
+      Response
+        .text(s"Validation error in field '$field': $reason")
+        .withStatus(Status.BadRequest)
+
+    case CatalogError.DatabaseError(cause) =>
+      Response
+        .text(s"Database error: ${cause.getMessage}")
+        .withStatus(Status.InternalServerError)
+
+    case CatalogError.ConfigurationError(reason) =>
+      Response
+        .text(s"Configuration error: $reason")
+        .withStatus(Status.InternalServerError)
+
+    case CatalogError.ApplicationError(reason, _) =>
+      Response
+        .text(s"Application error: $reason")
+        .withStatus(Status.InternalServerError)
   }
 }

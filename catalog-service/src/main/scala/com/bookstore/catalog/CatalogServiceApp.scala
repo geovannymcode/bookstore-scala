@@ -1,39 +1,87 @@
 package com.bookstore.catalog
 
-import com.bookstore.catalog.web.api.ProductApi
-import com.bookstore.catalog.config.ApplicationConfig
-import com.bookstore.catalog.domain.{ProductRepository, ProductService}
-import com.typesafe.scalalogging.LazyLogging
+import zio._
+import zio.http._
+import zio.logging.backend.SLF4J
+import com.bookstore.catalog.config._
+import com.bookstore.catalog.domain._
+import com.bookstore.catalog.web.ProductApi
+import io.getquill.SnakeCase
+import io.getquill.jdbczio.Quill
+import javax.sql.DataSource
 
 /** Punto de entrada principal de la aplicación
-  */
-object CatalogServiceApp extends App with LazyLogging {
+ *
+ * Arquitectura funcional con ZIO:
+ * - Dependency Injection con ZLayers
+ * - Composición funcional pura
+ * - Resource management automático
+ */
+object CatalogServiceApp extends ZIOAppDefault:
 
-  logger.info("Starting Catalog Service...")
+  /** Layer de Quill con DataSource
+   *
+   * Crea el contexto de Quill conectado a DataSource
+   */
+  private val quillLayer: ZLayer[DataSource, Nothing, Quill.Postgres[SnakeCase.type]] =
+    Quill.Postgres.fromNamingStrategy(SnakeCase)
 
-  try {
-    // Inicializar configuración
-    val appConfig  = new ApplicationConfig()
-    val dataSource = appConfig.dataSource()
+  /** Programa principal de la aplicación
+   *
+   * Compone todos los layers necesarios y ejecuta el servidor
+   */
+  override def run: ZIO[Any, Any, Any] =
+    serverProgram
+      .provide(
+        // Configuración base
+        AppConfig.live,
 
-    // Ejecutar migraciones de base de datos
-    appConfig.runMigrations(dataSource)
+        // Logging estructurado
+        Runtime.removeDefaultLoggers >>> SLF4J.slf4j,
 
-    // Inicializar repositorios
-    val productRepository = new ProductRepository(dataSource)
+        // Capa de base de datos
+        AppConfig.dataSourceLayer,
+        quillLayer,
 
-    // Inicializar servicios
-    val productService = new ProductService(productRepository, appConfig.pageSize)
+        // Capa de dominio
+        ProductRepository.live,
+        serviceLayer,
 
-    // Iniciar la API REST
-    val productApi = new ProductApi(productService)
-    productApi.start(appConfig.httpHost, appConfig.httpPort)
+        // Servidor HTTP
+        Server.defaultWithPort(8081)
+      )
+      .tapError(err => ZIO.logErrorCause("Failed to start service", Cause.fail(err)))
+      .exitCode
 
-    logger.info("Catalog Service started successfully")
+  /** Layer del servicio con configuración de pageSize
+   */
+  private val serviceLayer: ZLayer[AppConfig & ProductRepository, Nothing, ProductService] =
+    ZLayer {
+      for
+        config <- ZIO.service[AppConfig]
+        repo   <- ZIO.service[ProductRepository]
+      yield ProductServiceLive(repo, config.catalog.pageSize)
+    }
 
-  } catch {
-    case ex: Exception =>
-      logger.error("Failed to start Catalog Service", ex)
-      System.exit(1)
-  }
-}
+  /** Programa del servidor HTTP
+   *
+   * Inicia el servidor y mantiene la aplicación corriendo
+   */
+  private val serverProgram: ZIO[AppConfig & ProductService & Server, Throwable, Unit] =
+    for
+      config <- ZIO.service[AppConfig]
+      _      <- ZIO.logInfo("=" * 60)
+      _      <- ZIO.logInfo("🚀 Starting Catalog Service")
+      _      <- ZIO.logInfo("=" * 60)
+      _      <- ZIO.logInfo(s"📦 Service Name: ${config.catalog.name}")
+      _      <- ZIO.logInfo(s"🗄️  Database URL: ${config.database.url}")
+      _      <- ZIO.logInfo(s"🌐 HTTP Endpoint: http://localhost:8081")
+      _      <- ZIO.logInfo(s"📄 Page Size: ${config.catalog.pageSize}")
+      _      <- ZIO.logInfo("=" * 60)
+
+      // Servir HTTP con las rutas de ProductApi (sin Middleware.debug)
+      _ <- Server.serve(ProductApi.routes)
+
+    yield ()
+
+end CatalogServiceApp

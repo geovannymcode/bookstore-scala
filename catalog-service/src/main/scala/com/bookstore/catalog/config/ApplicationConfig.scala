@@ -1,57 +1,105 @@
 package com.bookstore.catalog.config
 
+import zio._
+import zio.config._
+import zio.config.magnolia._
+import zio.config.typesafe._
 import com.zaxxer.hikari.{HikariConfig, HikariDataSource}
 import org.flywaydb.core.Flyway
-import com.typesafe.scalalogging.LazyLogging
-import pureconfig._
-import pureconfig.generic.auto._
 
-class ApplicationConfig extends LazyLogging {
+/** Configuración del catálogo
+ */
+final case class CatalogConfig(
+                                name: String,
+                                pageSize: Int
+                              )
 
-  // Cargar configuración desde application.conf
-  private val config: AppConfig = ConfigSource.default.loadOrThrow[AppConfig]
+/** Configuración del pool de conexiones
+ */
+final case class PoolConfig(
+                             minimumIdle: Int,
+                             maximumPoolSize: Int,
+                             connectionTimeout: Long,
+                             idleTimeout: Long,
+                             maxLifetime: Long
+                           )
 
-  logger.info(s"Loading configuration for service: ${config.catalog.name}")
-  logger.info(s"Database URL: ${config.database.url}")
-  logger.info(s"HTTP Server: ${config.http.host}:${config.http.port}")
+/** Configuración de la base de datos
+ */
+final case class DatabaseConfig(
+                                 url: String,
+                                 username: String,
+                                 password: String,
+                                 driver: String,
+                                 pool: PoolConfig
+                               )
 
-  // Exponer configuraciones
-  val pageSize: Int    = config.catalog.pageSize
-  val httpHost: String = config.http.host
-  val httpPort: Int    = config.http.port
+/** Configuración HTTP
+ */
+final case class HttpConfig(
+                             host: String,
+                             port: Int
+                           )
 
-  def dataSource(): HikariDataSource = {
-    val hikariConfig = new HikariConfig()
+/** Configuración completa de la aplicación
+ */
+final case class AppConfig(
+                            catalog: CatalogConfig,
+                            database: DatabaseConfig,
+                            http: HttpConfig
+                          )
 
-    hikariConfig.setJdbcUrl(config.database.url)
-    hikariConfig.setUsername(config.database.username)
-    hikariConfig.setPassword(config.database.password)
-    hikariConfig.setDriverClassName(config.database.driver)
+object AppConfig {
 
-    // Configuración del pool
-    hikariConfig.setMinimumIdle(config.database.pool.minimumIdle)
-    hikariConfig.setMaximumPoolSize(config.database.pool.maximumPoolSize)
-    hikariConfig.setConnectionTimeout(config.database.pool.connectionTimeout)
-    hikariConfig.setIdleTimeout(config.database.pool.idleTimeout)
-    hikariConfig.setMaxLifetime(config.database.pool.maxLifetime)
+  /** Layer que proporciona la configuración
+   */
+  val live: ZLayer[Any, Config.Error, AppConfig] =
+    ZLayer {
+      ZIO.config[AppConfig](deriveConfig[AppConfig].mapKey(toKebabCase))
+    }
 
-    logger.info(
-      "Creating HikariCP DataSource with pool size: " +
-        s"${config.database.pool.minimumIdle}-${config.database.pool.maximumPoolSize}"
-    )
+  /** Crea un DataSource de HikariCP
+   */
+  def createDataSource(dbConfig: DatabaseConfig): Task[HikariDataSource] =
+    ZIO.attempt {
+      val hikariConfig = new HikariConfig()
+      hikariConfig.setJdbcUrl(dbConfig.url)
+      hikariConfig.setUsername(dbConfig.username)
+      hikariConfig.setPassword(dbConfig.password)
+      hikariConfig.setDriverClassName(dbConfig.driver)
+      hikariConfig.setMinimumIdle(dbConfig.pool.minimumIdle)
+      hikariConfig.setMaximumPoolSize(dbConfig.pool.maximumPoolSize)
+      hikariConfig.setConnectionTimeout(dbConfig.pool.connectionTimeout)
+      hikariConfig.setIdleTimeout(dbConfig.pool.idleTimeout)
+      hikariConfig.setMaxLifetime(dbConfig.pool.maxLifetime)
 
-    new HikariDataSource(hikariConfig)
-  }
+      new HikariDataSource(hikariConfig)
+    }
 
-  def runMigrations(ds: HikariDataSource): Unit = {
-    logger.info("Running database migrations...")
-    val flyway = Flyway
-      .configure()
-      .dataSource(ds)
-      .locations("classpath:db/migration")
-      .load()
+  /** Ejecuta migraciones de Flyway
+   */
+  def runMigrations(dataSource: HikariDataSource): Task[Int] =
+    ZIO.attempt {
+      val flyway = Flyway
+        .configure()
+        .dataSource(dataSource)
+        .locations("classpath:db/migration")
+        .load()
 
-    val result = flyway.migrate()
-    logger.info(s"Migrations completed. Applied ${result.migrationsExecuted} migrations")
-  }
+      flyway.migrate().migrationsExecuted
+    }
+
+  /** Layer que proporciona DataSource con migraciones ejecutadas
+   */
+  val dataSourceLayer: ZLayer[AppConfig, Throwable, HikariDataSource] =
+    ZLayer.scoped {
+      for {
+        config     <- ZIO.service[AppConfig]
+        _          <- ZIO.logInfo(s"Creating DataSource for ${config.database.url}")
+        dataSource <- createDataSource(config.database)
+        migrations <- runMigrations(dataSource)
+        _          <- ZIO.logInfo(s"Executed $migrations migrations")
+        _          <- ZIO.addFinalizer(ZIO.attempt(dataSource.close()).orDie)
+      } yield dataSource
+    }
 }
